@@ -9,13 +9,91 @@
 
 using namespace std;
 using filesystem::path;
+    
+const static regex include_local(R"/(\s*#\s*include\s*"([^"]*)"s*)/");
+const static regex include_global(R"/(\s*#\s*include\s*<([^>]*)>\s*)/");
 
 path operator""_p(const char* data, std::size_t sz) {
     return path(data, data + sz);
 }
 
-// напишите эту функцию
 bool Preprocess(const path& in_file, const path& out_file, const vector<path>& include_directories);
+bool CheckGlobal(const vector<path>& include_directories, const path& in_file, const path& out_file, int line_number, const smatch& match);
+
+bool CheckGlobal(
+    const vector<path>& include_directories,
+    const path& in_file,
+    const path& out_file,
+    int line_number,
+    const smatch& match
+) {
+    bool is_found = false;
+               
+    for (const auto& include_dir : include_directories) {
+        path global_include = include_dir / match[1].str();
+                    
+        if (filesystem::exists(global_include) && filesystem::is_regular_file(global_include)) {
+            if (!Preprocess(global_include, out_file, include_directories)) {
+                cout << "unknown include file " << global_include << " at file " << static_cast<string>(in_file) << " at line " << line_number << endl;
+                return false;
+            }
+
+            is_found = true;
+            break;
+        }
+    }
+                
+    if (!is_found) {
+        cout << "unknown include file " << match[1].str() << " at file " << static_cast<string>(in_file) << " at line " << line_number << endl;
+        return false;
+    }
+    
+    return is_found;
+}
+
+bool Preprocess(const path& in_file, const path& out_file, const vector<path>& include_directories) {
+    ifstream input(in_file);
+    if (!input.is_open()) {
+        return false; // не удалось открыть поток чтения.
+    }
+    
+    ofstream output(out_file, ofstream::app);
+    if (!output.is_open()) {
+        return false; // не получилось открыть поток записи
+    }
+
+    string line = "";
+    int line_number = 1;
+
+    while (getline(input, line)) {
+        smatch match;
+                
+        if (regex_match(line, match, include_local)) {
+            path include_file = in_file.parent_path() / match[1].str();
+            
+            if (filesystem::exists(include_file) && filesystem::is_regular_file(include_file)) {
+                if (!Preprocess(include_file, out_file, include_directories)) {
+                    cout << "unknown include file " << include_file << " at file " << static_cast<string>(in_file) << " at line " << line_number << endl;
+                    return false;
+                }
+            } else {
+                if (!CheckGlobal(include_directories, in_file, out_file, line_number, match)) {
+                    return false;
+                }
+            }
+        } else if (regex_match(line, match, include_global)) {
+            if (!CheckGlobal(include_directories, in_file, out_file, line_number, match)) {
+                return false;
+            }
+        } else {
+            output << line << endl;
+        }
+        
+        line_number++;
+    }
+    
+    return true;
+}
 
 string GetFileContents(string file) {
     ifstream stream(file);
@@ -87,7 +165,7 @@ void Test() {
                 "\n"
                 "int SayHello() {\n"
                 "    cout << \"hello, world!\" << endl;\n"s;
-
+    
     assert(GetFileContents("sources/a.in"s) == test_out.str());
 }
 
